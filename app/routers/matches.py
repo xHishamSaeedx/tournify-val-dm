@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from app.models import MatchRequest, MatchResponse, MatchValidationRequest, MatchValidationResponse
+from app.models import MatchRequest, MatchResponse, MatchValidationRequest, MatchValidationResponse, PlayerStats, LeaderboardEntry, LeaderboardResponse
 from datetime import datetime, timedelta
+from typing import List
 import uuid
 import httpx
 import asyncio
@@ -339,3 +340,112 @@ async def verify_match_details(client: httpx.AsyncClient, match_id: str, expecte
         
     except Exception as e:
         return False, None, None, f"Error verifying match details: {str(e)}"
+
+async def get_match_details(client: httpx.AsyncClient, match_id: str) -> dict:
+    """
+    Fetch match details including player statistics from the riot dummy server.
+    
+    Args:
+        client: HTTP client for making requests
+        match_id: The match ID to fetch details for
+    
+    Returns:
+        Dictionary containing match details and player statistics
+    """
+    try:
+        response = await client.post(
+            "http://localhost:8001/matches/",
+            json={"match_id": match_id},
+            timeout=10.0
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise HTTPException(status_code=404, detail=f"Match details not found for match ID: {match_id}")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching match details: {str(e)}")
+
+def create_leaderboard(players: List[PlayerStats]) -> List[LeaderboardEntry]:
+    """
+    Create a leaderboard from player statistics, sorted by kills first, then by average combat score.
+    
+    Args:
+        players: List of PlayerStats objects
+    
+    Returns:
+        List of LeaderboardEntry objects sorted by rank
+    """
+    # Sort players by kills (descending), then by average combat score (descending)
+    sorted_players = sorted(players, key=lambda x: (x.kills, x.average_combat_score), reverse=True)
+    
+    leaderboard = []
+    for i, player in enumerate(sorted_players):
+        entry = LeaderboardEntry(
+            rank=i + 1,
+            player_id=player.player_id,
+            kills=player.kills,
+            average_combat_score=player.average_combat_score
+        )
+        leaderboard.append(entry)
+    
+    return leaderboard
+
+@router.post("/leaderboard", response_model=LeaderboardResponse)
+async def get_match_leaderboard(request: MatchValidationRequest):
+    """
+    Get the leaderboard for a validated match. This endpoint first validates the match
+    and then returns the leaderboard sorted by kills (primary) and average combat score (secondary).
+    
+    Args:
+        request: MatchValidationRequest containing match validation details
+    
+    Returns:
+        LeaderboardResponse with sorted leaderboard and match details
+    """
+    try:
+        # First validate the match
+        validation_response = await validate_match_history(request)
+        
+        if not validation_response.validation_passed:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Match validation failed: {validation_response.message}"
+            )
+        
+        # Use the final match ID (original or alternative)
+        final_match_id = validation_response.alternative_match_id or request.match_id
+        
+        # Fetch match details
+        async with httpx.AsyncClient() as client:
+            match_details = await get_match_details(client, final_match_id)
+        
+        # Extract player statistics
+        players_data = match_details.get("players", [])
+        players = [PlayerStats(**player_data) for player_data in players_data]
+        
+        # Create leaderboard
+        leaderboard = create_leaderboard(players)
+        
+        # Parse match start time
+        match_start_time_str = match_details.get("match_start_time")
+        if 'T' in match_start_time_str:
+            match_start_time = datetime.fromisoformat(match_start_time_str.replace('Z', '+00:00'))
+        else:
+            match_start_time = datetime.fromisoformat(match_start_time_str)
+        
+        return LeaderboardResponse(
+            match_id=final_match_id,
+            match_start_time=match_start_time,
+            map=match_details.get("map", ""),
+            leaderboard=leaderboard,
+            total_players=len(players),
+            message=f"Leaderboard generated successfully for match '{final_match_id}'. {len(players)} players ranked by kills and average combat score."
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

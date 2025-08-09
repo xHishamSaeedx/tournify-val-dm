@@ -34,3 +34,22 @@ class MatchValidationResponse(BaseModel):
     match_details_verified: bool = False
     time_verification_passed: Optional[bool] = None
     map_verification_passed: Optional[bool] = None
+
+class PlayerStats(BaseModel):
+    player_id: str
+    kills: int
+    average_combat_score: float
+
+class LeaderboardEntry(BaseModel):
+    rank: int
+    player_id: str
+    kills: int
+    average_combat_score: float
+
+class LeaderboardResponse(BaseModel):
+    match_id: str
+    match_start_time: datetime
+    map: str
+    leaderboard: List[LeaderboardEntry]
+    total_players: int
+    message: str
