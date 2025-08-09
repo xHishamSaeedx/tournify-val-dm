@@ -12,7 +12,12 @@ async def test_leaderboard():
             "player_test_match_123_2", 
             "player_test_match_123_3",
             "player_test_match_123_4",
-            "player_test_match_123_5"
+            "player_test_match_123_5",
+            "player_test_match_123_6",
+            "player_test_match_123_7",
+            "player_test_match_123_8",
+            "player_test_match_123_9",
+            "player_test_match_123_10"
         ],
         "expected_start_time": "2024-01-15T14:30:00",
         "expected_map": "Ascent"

@@ -314,18 +314,26 @@ async def get_match_details(client: httpx.AsyncClient, match_id: str) -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching match details: {str(e)}")
 
-def create_leaderboard(players: List[PlayerStats]) -> List[LeaderboardEntry]:
+def create_leaderboard(players: List[PlayerStats], allowed_player_ids: List[str] = None) -> List[LeaderboardEntry]:
     """
     Create a leaderboard from player statistics, sorted by kills first, then by average combat score.
+    Only includes players that are in the allowed_player_ids list if provided.
     
     Args:
         players: List of PlayerStats objects
+        allowed_player_ids: Optional list of player IDs to include in the leaderboard
     
     Returns:
         List of LeaderboardEntry objects sorted by rank
     """
+    # Filter players if allowed_player_ids is provided
+    if allowed_player_ids:
+        filtered_players = [player for player in players if player.player_id in allowed_player_ids]
+    else:
+        filtered_players = players
+    
     # Sort players by kills (descending), then by average combat score (descending)
-    sorted_players = sorted(players, key=lambda x: (x.kills, x.average_combat_score), reverse=True)
+    sorted_players = sorted(filtered_players, key=lambda x: (x.kills, x.average_combat_score), reverse=True)
     
     leaderboard = []
     for i, player in enumerate(sorted_players):
@@ -372,8 +380,8 @@ async def get_match_leaderboard(request: MatchValidationRequest):
         players_data = match_details.get("players", [])
         players = [PlayerStats(**player_data) for player_data in players_data]
         
-        # Create leaderboard
-        leaderboard = create_leaderboard(players)
+        # Create leaderboard with only the players from the original request
+        leaderboard = create_leaderboard(players, request.player_ids)
         
         # Parse match start time
         match_start_time_str = match_details.get("match_start_time")
@@ -387,8 +395,8 @@ async def get_match_leaderboard(request: MatchValidationRequest):
             match_start_time=match_start_time,
             map=match_details.get("map", ""),
             leaderboard=leaderboard,
-            total_players=len(players),
-            message=f"Leaderboard generated successfully for match '{final_match_id}'. {len(players)} players ranked by kills and average combat score."
+            total_players=len(leaderboard),
+            message=f"Leaderboard generated successfully for match '{final_match_id}'. {len(leaderboard)} players from the original request ranked by kills and average combat score."
         )
         
     except HTTPException:
