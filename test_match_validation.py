@@ -14,9 +14,8 @@ def test_match_validation():
     # Test cases
     test_cases = [
         {
-            "name": "Valid match ID with correct details (should pass)",
+            "name": "Valid players with common match (should pass)",
             "data": {
-                "match_id": "test_match_123",
                 "player_ids": [
                     "player_test_match_123_1",
                     "player_test_match_123_2", 
@@ -29,9 +28,8 @@ def test_match_validation():
             }
         },
         {
-            "name": "Valid match ID but wrong time/map (should fail verification)",
+            "name": "Valid players but wrong time/map (should fail verification)",
             "data": {
-                "match_id": "test_match_123",
                 "player_ids": [
                     "player_test_match_123_1",
                     "player_test_match_123_2", 
@@ -42,29 +40,21 @@ def test_match_validation():
             }
         },
         {
-            "name": "Invalid match ID but with alternative (should detect host error)",
+            "name": "Players with no common match (should fail)",
             "data": {
-                "match_id": "wrong_match_id",
                 "player_ids": [
-                    "player_test_match_123_1",
-                    "player_test_match_123_2", 
-                    "player_test_match_123_3",
-                    "player_test_match_123_4",
-                    "player_test_match_123_5"
+                    "player_no_match_1",
+                    "player_no_match_2", 
+                    "player_no_match_3"
                 ],
                 "expected_start_time": "2024-01-15T14:30:00",
                 "expected_map": "Ascent"
             }
         },
         {
-            "name": "Completely invalid match ID (should fail)",
+            "name": "Empty player list (should fail)",
             "data": {
-                "match_id": "completely_wrong_id",
-                "player_ids": [
-                    "player_test_match_123_1",
-                    "player_test_match_123_2", 
-                    "player_test_match_123_3"
-                ],
+                "player_ids": [],
                 "expected_start_time": "2024-01-15T14:30:00",
                 "expected_map": "Ascent"
             }
@@ -90,7 +80,6 @@ def test_match_validation():
                 print(f"Match ID: {result['match_id']}")
                 print(f"Percentage with match: {result['percentage_with_match']:.1f}%")
                 print(f"Validation passed: {result['validation_passed']}")
-                print(f"Host error detected: {result['host_error']}")
                 print(f"Match details verified: {result['match_details_verified']}")
                 if result.get('alternative_match_id'):
                     print(f"Alternative match ID: {result['alternative_match_id']}")

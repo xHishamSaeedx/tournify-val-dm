@@ -5,9 +5,8 @@ from datetime import datetime
 async def test_leaderboard():
     """Test the leaderboard functionality by first validating the match, then getting the leaderboard."""
     
-    # Test data - using the test_match_123 that we know exists in the dummy server
+    # Test data - using players that we know have a common match in the dummy server
     test_request = {
-        "match_id": "test_match_123",
         "player_ids": [
             "player_test_match_123_1",
             "player_test_match_123_2", 

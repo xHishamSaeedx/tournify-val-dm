@@ -65,12 +65,11 @@ async def get_match(match_id: str):
 @router.post("/validate-match-history", response_model=MatchValidationResponse)
 async def validate_match_history(request: MatchValidationRequest):
     """
-    Validate if players have the match ID in their match history.
-    If 70% don't have the original match ID, check for alternative match IDs that 70% share.
-    After confirming the correct match ID, fetch match details and verify start time and map.
+    Find the common match ID among all players and validate it.
+    After finding the common match ID, fetch match details and verify start time and map.
     
     Args:
-        request: MatchValidationRequest containing match_id, player_ids, expected_start_time, and expected_map
+        request: MatchValidationRequest containing player_ids, expected_start_time, and expected_map
     
     Returns:
         MatchValidationResponse with validation results
@@ -80,12 +79,7 @@ async def validate_match_history(request: MatchValidationRequest):
         if not request.player_ids:
             raise HTTPException(status_code=400, detail="Player IDs list cannot be empty")
         
-        if not request.match_id:
-            raise HTTPException(status_code=400, detail="Match ID cannot be empty")
-        
         # Check each player's match history
-        players_with_match = []
-        players_without_match = []
         all_player_matches = {}
         
         async with httpx.AsyncClient() as client:
@@ -101,77 +95,60 @@ async def validate_match_history(request: MatchValidationRequest):
             for i, result in enumerate(results):
                 player_id = request.player_ids[i]
                 if isinstance(result, Exception):
-                    # If there's an error checking the player, count them as not having the match
-                    players_without_match.append(player_id)
+                    # If there's an error checking the player, count them as not having any matches
                     all_player_matches[player_id] = []
                 else:
                     matches = result
                     all_player_matches[player_id] = matches
-                    if request.match_id in matches:
-                        players_with_match.append(player_id)
-                    else:
-                        players_without_match.append(player_id)
             
-            # Calculate percentage for original match ID
+            # Find the common match ID that 70% of players share
             total_players = len(request.player_ids)
-            percentage_with_match = (len(players_with_match) / total_players) * 100 if total_players > 0 else 0
+            common_match_id, percentage_with_match = find_common_match_id(all_player_matches, total_players)
             
-            # Check if 70% threshold is met for original match ID
-            validation_passed = percentage_with_match >= 70
-            alternative_match_id = None
-            host_error = False
-            final_match_id = request.match_id
+            if not common_match_id:
+                message = f"Validation failed! No match ID found that 70% of players share. At least 70% of players must have a common match in their history."
+                return MatchValidationResponse(
+                    match_id="",
+                    players_with_match=[],
+                    players_without_match=request.player_ids,
+                    percentage_with_match=0.0,
+                    validation_passed=False,
+                    message=message,
+                    alternative_match_id=None,
+                    match_details_verified=False,
+                    time_verification_passed=None,
+                    map_verification_passed=None
+                )
             
-            # If original validation failed, check for alternative match IDs
-            if not validation_passed:
-                alternative_match_id, alternative_percentage = find_alternative_match_id(all_player_matches, total_players)
-                
-                if alternative_match_id:
-                    # Found an alternative match ID that 70% of players share
-                    validation_passed = True
-                    host_error = True  # Indicate this is due to host error
-                    final_match_id = alternative_match_id
-                    message = f"Original match ID '{request.match_id}' not found in 70% of players' history. However, found alternative match ID '{alternative_match_id}' that {alternative_percentage:.1f}% of players share. This suggests a host error."
+            # Find which players have the common match ID
+            players_with_match = []
+            players_without_match = []
+            
+            for player_id, matches in all_player_matches.items():
+                if common_match_id in matches:
+                    players_with_match.append(player_id)
                 else:
-                    # No alternative match ID found
-                    message = f"Validation failed! Only {percentage_with_match:.1f}% of players have the match '{request.match_id}' in their history (70% required). No alternative match ID found that 70% of players share."
-                    return MatchValidationResponse(
-                        match_id=request.match_id,
-                        players_with_match=players_with_match,
-                        players_without_match=players_without_match,
-                        percentage_with_match=percentage_with_match,
-                        validation_passed=False,
-                        message=message,
-                        alternative_match_id=None,
-                        host_error=False,
-                        match_details_verified=False,
-                        time_verification_passed=None,
-                        map_verification_passed=None
-                    )
+                    players_without_match.append(player_id)
+            
+            # Verify match details
+            async with httpx.AsyncClient() as verify_client:
+                match_details_verified, time_verification_passed, map_verification_passed, verification_message = await verify_match_details(verify_client, common_match_id, request.expected_start_time, request.expected_map)
+            
+            if not match_details_verified:
+                validation_passed = False
+                message = f"Found common match ID '{common_match_id}' that {percentage_with_match:.1f}% of players share, but match details verification failed: {verification_message}"
             else:
-                message = f"Validation passed! {percentage_with_match:.1f}% of players have the match in their history."
-            
-            # If validation passed (either original or alternative), verify match details
-            if validation_passed:
-                # Create a new client for match details verification
-                async with httpx.AsyncClient() as verify_client:
-                    match_details_verified, time_verification_passed, map_verification_passed, verification_message = await verify_match_details(verify_client, final_match_id, request.expected_start_time, request.expected_map)
-                
-                if not match_details_verified:
-                    validation_passed = False
-                    message = verification_message
-                else:
-                    message += f" Match details verified successfully."
+                validation_passed = True
+                message = f"Validation passed! Found common match ID '{common_match_id}' that {percentage_with_match:.1f}% of players share. Match details verified successfully."
             
             return MatchValidationResponse(
-                match_id=request.match_id,
+                match_id=common_match_id,
                 players_with_match=players_with_match,
                 players_without_match=players_without_match,
                 percentage_with_match=percentage_with_match,
                 validation_passed=validation_passed,
                 message=message,
-                alternative_match_id=alternative_match_id,
-                host_error=host_error,
+                alternative_match_id=None,
                 match_details_verified=match_details_verified if validation_passed else False,
                 time_verification_passed=time_verification_passed,
                 map_verification_passed=map_verification_passed
@@ -211,16 +188,16 @@ async def get_player_match_history(client: httpx.AsyncClient, player_id: str) ->
         # If there's any error, return empty list
         return []
 
-def find_alternative_match_id(all_player_matches: dict, total_players: int) -> tuple:
+def find_common_match_id(all_player_matches: dict, total_players: int) -> tuple:
     """
-    Find an alternative match ID that 70% of players share.
+    Find a common match ID that 70% of players share.
     
     Args:
         all_player_matches: Dictionary mapping player_id to list of match IDs
         total_players: Total number of players
     
     Returns:
-        Tuple of (alternative_match_id, percentage) or (None, 0) if not found
+        Tuple of (common_match_id, percentage) or (None, 0) if not found
     """
     # Collect all match IDs from all players
     all_match_ids = []
@@ -240,37 +217,7 @@ def find_alternative_match_id(all_player_matches: dict, total_players: int) -> t
     
     return None, 0
 
-async def check_player_match_history(client: httpx.AsyncClient, player_id: str, match_id: str) -> bool:
-    """
-    Check if a player has the match ID in their match history.
-    
-    Args:
-        client: HTTP client for making requests
-        player_id: The player ID to check
-        match_id: The match ID to look for
-    
-    Returns:
-        True if the player has the match in their history, False otherwise
-    """
-    try:
-        # Make request to riot dummy server (port 8001)
-        response = await client.post(
-            "http://localhost:8001/matches/player-history",
-            json={"player_id": player_id},
-            timeout=10.0
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            recent_matches = data.get("recent_matches", [])
-            return match_id in recent_matches
-        else:
-            # If the request fails, assume the player doesn't have the match
-            return False
-            
-    except Exception:
-        # If there's any error, assume the player doesn't have the match
-        return False
+
 
 async def verify_match_details(client: httpx.AsyncClient, match_id: str, expected_start_time: datetime, expected_map: str) -> tuple:
     """
@@ -414,8 +361,8 @@ async def get_match_leaderboard(request: MatchValidationRequest):
                 detail=f"Match validation failed: {validation_response.message}"
             )
         
-        # Use the final match ID (original or alternative)
-        final_match_id = validation_response.alternative_match_id or request.match_id
+        # Use the found match ID from validation
+        final_match_id = validation_response.match_id
         
         # Fetch match details
         async with httpx.AsyncClient() as client:
