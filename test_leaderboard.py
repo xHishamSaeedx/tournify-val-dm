@@ -5,21 +5,23 @@ from datetime import datetime
 async def test_leaderboard():
     """Test the leaderboard functionality by first validating the match, then getting the leaderboard."""
     
-    # Test data - using players that we know have a common match in the dummy server
+    # Test data - using the same players as test_match_validation.py
     test_request = {
-        "player_ids": [
-            "player_test_match_123_1",
-            "player_test_match_123_2", 
-            "player_test_match_123_3",
-            "player_test_match_123_4",
-            "player_test_match_123_5",
-            "player_test_match_123_6",
-            "player_test_match_123_7",
-            "player_test_match_123_8",
-            "player_test_match_123_9",
-            "player_test_match_123_10"
+        "players": [
+            {
+                "name": "HystericalBat",
+                "tag": "3571",
+                "region": "ap",
+                "platform": "pc"
+            },
+            {
+                "name": "i miss her",
+                "tag": "01819",
+                "region": "ap",
+                "platform": "pc"
+            }
         ],
-        "expected_start_time": "2024-01-15T14:30:00",
+        "expected_start_time": "2025-08-09T11:58:27",
         "expected_map": "Ascent"
     }
     
@@ -42,7 +44,7 @@ async def test_leaderboard():
             print("✅ Match validation successful!")
             print(f"Match ID: {validation_data['match_id']}")
             print(f"Validation Passed: {validation_data['validation_passed']}")
-            print(f"Players with match: {len(validation_data['players_with_match'])}/{len(test_request['player_ids'])}")
+            print(f"Players with match: {len(validation_data['players_with_match'])}/{len(test_request['players'])}")
             print(f"Percentage: {validation_data['percentage_with_match']:.1f}%")
             print(f"Message: {validation_data['message']}")
             
@@ -66,11 +68,13 @@ async def test_leaderboard():
                 print(f"Total Players: {leaderboard_data['total_players']}")
                 print(f"Message: {leaderboard_data['message']}")
                 print("\n🏆 Leaderboard:")
-                print("Rank | Player ID | Kills | Average Combat Score")
-                print("-" * 50)
+                print("Rank | Player Name#Tag | Kills | Average Combat Score")
+                print("-" * 60)
                 
                 for entry in leaderboard_data['leaderboard']:
-                    print(f"{entry['rank']:4} | {entry['player_id']:20} | {entry['kills']:5} | {entry['average_combat_score']:8.2f}")
+                    player_info = entry['player_info']
+                    player_name = f"{player_info['name']}#{player_info['tag']}"
+                    print(f"{entry['rank']:4} | {player_name:25} | {entry['kills']:5} | {entry['average_combat_score']:8.2f}")
                     
             else:
                 print(f"❌ Leaderboard generation failed with status {leaderboard_response.status_code}")

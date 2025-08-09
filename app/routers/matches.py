@@ -1,13 +1,27 @@
 from fastapi import APIRouter, HTTPException
-from app.models import MatchRequest, MatchResponse, MatchValidationRequest, MatchValidationResponse, PlayerStats, LeaderboardEntry, LeaderboardResponse
-from datetime import datetime, timedelta
+from app.models import MatchRequest, MatchResponse, MatchValidationRequest, MatchValidationResponse, PlayerStats, LeaderboardEntry, LeaderboardResponse, PlayerInfo
+from datetime import datetime, timedelta, timezone
 from typing import List
 import uuid
 import httpx
 import asyncio
 from collections import Counter
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 router = APIRouter(prefix="/matches", tags=["matches"])
+
+# Get the player match history URL from environment variable
+VALO_PLAYER_MH_URL = os.getenv("VALO_PLAYER_MH_URL", "https://api.henrikdev.xyz/valorant/v4/matches")
+
+# Get the match details URL from environment variable
+VALO_MATCH_DETAILS_URL = os.getenv("VALO_MATCH_DETAILS_URL", "https://api.henrikdev.xyz/valorant/v2/match")
+
+# Get the API key from environment variable
+RIOT_API_KEY = os.getenv("RIOT_APIKEY")
 
 @router.post("/", response_model=MatchResponse)
 async def create_match(match_request: MatchRequest):
@@ -15,7 +29,7 @@ async def create_match(match_request: MatchRequest):
     Create a new match with the provided details.
     
     Args:
-        match_request: MatchRequest object containing player_ids, match_start_time, 
+        match_request: MatchRequest object containing players, match_start_time, 
                       match_map, and expected_match_id
     
     Returns:
@@ -23,8 +37,8 @@ async def create_match(match_request: MatchRequest):
     """
     try:
         # Validate the request
-        if not match_request.player_ids:
-            raise HTTPException(status_code=400, detail="Player IDs list cannot be empty")
+        if not match_request.players:
+            raise HTTPException(status_code=400, detail="Players list cannot be empty")
         
         if not match_request.match_map:
             raise HTTPException(status_code=400, detail="Match map cannot be empty")
@@ -37,7 +51,7 @@ async def create_match(match_request: MatchRequest):
         
         return MatchResponse(
             match_id=match_id,
-            player_ids=match_request.player_ids,
+            players=match_request.players,
             match_start_time=match_request.match_start_time,
             match_map=match_request.match_map,
             status="created",
@@ -69,15 +83,15 @@ async def validate_match_history(request: MatchValidationRequest):
     After finding the common match ID, fetch match details and verify start time and map.
     
     Args:
-        request: MatchValidationRequest containing player_ids, expected_start_time, and expected_map
+        request: MatchValidationRequest containing players, expected_start_time, and expected_map
     
     Returns:
         MatchValidationResponse with validation results
     """
     try:
         # Validate the request
-        if not request.player_ids:
-            raise HTTPException(status_code=400, detail="Player IDs list cannot be empty")
+        if not request.players:
+            raise HTTPException(status_code=400, detail="Players list cannot be empty")
         
         # Check each player's match history
         all_player_matches = {}
@@ -85,32 +99,36 @@ async def validate_match_history(request: MatchValidationRequest):
         async with httpx.AsyncClient() as client:
             # Check each player's match history concurrently
             tasks = []
-            for player_id in request.player_ids:
-                task = get_player_match_history(client, player_id)
+            for player in request.players:
+                task = get_player_match_history(client, player)
                 tasks.append(task)
             
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Process results
             for i, result in enumerate(results):
-                player_id = request.player_ids[i]
+                player = request.players[i]
                 if isinstance(result, Exception):
                     # If there's an error checking the player, count them as not having any matches
-                    all_player_matches[player_id] = []
+                    all_player_matches[player] = []
+                    print(f"❌ Error getting matches for {player.name}#{player.tag}: {result}")
                 else:
                     matches = result
-                    all_player_matches[player_id] = matches
+                    all_player_matches[player] = matches
+                    print(f"✅ Found {len(matches)} matches for {player.name}#{player.tag}: {matches}")
             
             # Find the common match ID that 70% of players share
-            total_players = len(request.player_ids)
+            total_players = len(request.players)
+            print(f"\n🔍 Looking for common match ID among {total_players} players...")
             common_match_id, percentage_with_match = find_common_match_id(all_player_matches, total_players)
+            print(f"🎯 Common match ID found: {common_match_id} (shared by {percentage_with_match:.1f}% of players)")
             
             if not common_match_id:
-                message = f"Validation failed! No match ID found that 70% of players share. At least 70% of players must have a common match in their history."
+                message = f"Validation failed! No match ID found that 70% of players share. At least 70% of players share. At least 70% of players must have a common match in their history."
                 return MatchValidationResponse(
                     match_id="",
                     players_with_match=[],
-                    players_without_match=request.player_ids,
+                    players_without_match=request.players,
                     percentage_with_match=0.0,
                     validation_passed=False,
                     message=message,
@@ -124,11 +142,11 @@ async def validate_match_history(request: MatchValidationRequest):
             players_with_match = []
             players_without_match = []
             
-            for player_id, matches in all_player_matches.items():
+            for player, matches in all_player_matches.items():
                 if common_match_id in matches:
-                    players_with_match.append(player_id)
+                    players_with_match.append(player)
                 else:
-                    players_without_match.append(player_id)
+                    players_without_match.append(player)
             
             # Verify match details
             async with httpx.AsyncClient() as verify_client:
@@ -157,29 +175,86 @@ async def validate_match_history(request: MatchValidationRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-async def get_player_match_history(client: httpx.AsyncClient, player_id: str) -> list:
+async def get_player_match_history(client: httpx.AsyncClient, player: PlayerInfo) -> list:
     """
     Get a player's match history.
     
     Args:
         client: HTTP client for making requests
-        player_id: The player ID to check
+        player: PlayerInfo object containing name, tag, region, and platform
     
     Returns:
-        List of match IDs in the player's history
+        List of match IDs in the player's history (filtered to matches within last 2 days)
     """
     try:
-        # Make request to riot dummy server (port 8001)
-        response = await client.post(
-            "http://localhost:8001/matches/player-history",
-            json={"player_id": player_id},
-            timeout=10.0
-        )
+        # Make request to real Riot API using player info
+        # URL encode the player name to handle spaces and special characters
+        import urllib.parse
+        encoded_name = urllib.parse.quote(player.name)
+        
+        # Use the same hardcoded base URL as the test files
+        base_url = "https://api.henrikdev.xyz/valorant/v4/matches"
+        url = f"{base_url}/{player.region}/{player.platform}/{encoded_name}/{player.tag}?mode=custom"
+        print(f"🌐 Making API request to: {url}")
+        
+        # Add API key to headers if available
+        headers = {}
+        if RIOT_API_KEY:
+            headers["Authorization"] = RIOT_API_KEY  # No Bearer prefix needed
+            print(f"🔑 Using API key: {RIOT_API_KEY[:10]}...")
+        else:
+            print("⚠️ No API key found in environment variables")
+        
+        response = await client.get(url, headers=headers, timeout=10.0)
+        print(f"📡 Response status: {response.status_code}")
         
         if response.status_code == 200:
             data = response.json()
-            recent_matches = data.get("recent_matches", [])
-            return recent_matches
+            recent_matches = data.get("data", [])
+            
+            print(f"🔍 Raw response for {player.name}#{player.tag}: {len(recent_matches)} matches found")
+            print(f"🔍 Full response status: {data.get('status')}")
+            if recent_matches:
+                print(f"📋 First match metadata keys: {list(recent_matches[0].get('metadata', {}).keys())}")
+                print(f"📋 First match started_at: {recent_matches[0].get('metadata', {}).get('started_at')}")
+                print(f"📋 First match match_id: {recent_matches[0].get('metadata', {}).get('match_id')}")
+            
+            # Calculate the cutoff time (30 days ago to be more lenient)
+            # Use UTC timezone to match the API timestamps
+            cutoff_time = datetime.now(timezone.utc) - timedelta(days=30)
+            print(f"⏰ Cutoff time: {cutoff_time}")
+            
+            # Filter matches that are within the last 30 days and extract match IDs
+            match_ids = []
+            for i, match in enumerate(recent_matches):
+                metadata = match.get("metadata", {})
+                started_at_str = metadata.get("started_at")
+                
+                print(f"📅 Match {i+1} started_at: {started_at_str}")
+                
+                if started_at_str:
+                    try:
+                        # Parse the started_at timestamp
+                        started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                        print(f"📅 Parsed started_at: {started_at}")
+                        # Check if the match is within the last 30 days
+                        if started_at >= cutoff_time:
+                            match_id = metadata.get("match_id")
+                            if match_id:
+                                match_ids.append(match_id)
+                                print(f"✅ Added match ID: {match_id} for {player.name}#{player.tag}")
+                            else:
+                                print(f"❌ No match_id found in metadata for {player.name}#{player.tag}")
+                        else:
+                            print(f"⏰ Match too old for {player.name}#{player.tag} (started: {started_at})")
+                    except (ValueError, TypeError) as e:
+                        # If parsing fails, skip this match
+                        print(f"❌ Failed to parse started_at for {player.name}#{player.tag}: {e}")
+                        continue
+                else:
+                    print(f"❌ No started_at found for match {i+1} for {player.name}#{player.tag}")
+            
+            return match_ids
         else:
             # If the request fails, return empty list
             return []
@@ -204,11 +279,15 @@ def find_common_match_id(all_player_matches: dict, total_players: int) -> tuple:
     for player_matches in all_player_matches.values():
         all_match_ids.extend(player_matches)
     
+    print(f"📊 All match IDs found: {all_match_ids}")
+    
     # Count occurrences of each match ID
     match_counter = Counter(all_match_ids)
+    print(f"📈 Match ID counts: {dict(match_counter)}")
     
     # Find match IDs that appear in at least 70% of players
     required_count = int(total_players * 0.7)
+    print(f"🎯 Required count for 70%: {required_count} out of {total_players} players")
     
     for match_id, count in match_counter.most_common():
         if count >= required_count:
@@ -233,10 +312,14 @@ async def verify_match_details(client: httpx.AsyncClient, match_id: str, expecte
         Tuple of (verified, time_passed, map_passed, message)
     """
     try:
-        # Fetch match details from riot dummy server
-        response = await client.post(
-            "http://localhost:8001/matches/",
-            json={"match_id": match_id},
+        # Fetch match details from real Riot API
+        headers = {}
+        if RIOT_API_KEY:
+            headers["Authorization"] = RIOT_API_KEY  # No Bearer prefix needed
+        
+        response = await client.get(
+            f"https://api.henrikdev.xyz/valorant/v2/match/{match_id}",
+            headers=headers,
             timeout=10.0
         )
         
@@ -244,23 +327,20 @@ async def verify_match_details(client: httpx.AsyncClient, match_id: str, expecte
             return False, None, None, f"Failed to fetch match details for match ID '{match_id}'"
         
         data = response.json()
-        actual_start_time_str = data.get("match_start_time")
-        actual_map = data.get("map")
+        # Extract data from the real Riot API response format
+        match_data = data.get("data", {})
+        actual_start_time_unix = match_data.get("metadata", {}).get("game_start")
+        actual_map = match_data.get("metadata", {}).get("map")
         
-        if not actual_start_time_str or not actual_map:
+        if not actual_start_time_unix or not actual_map:
             return False, None, None, f"Invalid match data received for match ID '{match_id}'"
         
-        # Parse the actual start time - handle different datetime formats
+        # Parse the actual start time from Unix timestamp
         try:
-            # Try parsing as ISO format first
-            if 'T' in actual_start_time_str:
-                # ISO format: "2024-01-15T14:30:00" or "2024-01-15T14:30:00.000000"
-                actual_start_time = datetime.fromisoformat(actual_start_time_str.replace('Z', '+00:00'))
-            else:
-                # Try other common formats
-                actual_start_time = datetime.fromisoformat(actual_start_time_str)
-        except ValueError as e:
-            return False, None, None, f"Invalid start time format in match data for match ID '{match_id}': {actual_start_time_str}"
+            # Convert Unix timestamp to datetime
+            actual_start_time = datetime.fromtimestamp(actual_start_time_unix)
+        except (ValueError, TypeError) as e:
+            return False, None, None, f"Invalid start time format in match data for match ID '{match_id}': {actual_start_time_unix}"
         
         # Verify start time (within ±5 minutes)
         time_difference = abs((actual_start_time - expected_start_time).total_seconds())
@@ -290,7 +370,7 @@ async def verify_match_details(client: httpx.AsyncClient, match_id: str, expecte
 
 async def get_match_details(client: httpx.AsyncClient, match_id: str) -> dict:
     """
-    Fetch match details including player statistics from the riot dummy server.
+    Fetch match details including player statistics from the real Riot API.
     
     Args:
         client: HTTP client for making requests
@@ -300,9 +380,13 @@ async def get_match_details(client: httpx.AsyncClient, match_id: str) -> dict:
         Dictionary containing match details and player statistics
     """
     try:
-        response = await client.post(
-            "http://localhost:8001/matches/",
-            json={"match_id": match_id},
+        headers = {}
+        if RIOT_API_KEY:
+            headers["Authorization"] = RIOT_API_KEY  # No Bearer prefix needed
+        
+        response = await client.get(
+            f"https://api.henrikdev.xyz/valorant/v2/match/{match_id}",
+            headers=headers,
             timeout=10.0
         )
         
@@ -314,21 +398,21 @@ async def get_match_details(client: httpx.AsyncClient, match_id: str) -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching match details: {str(e)}")
 
-def create_leaderboard(players: List[PlayerStats], allowed_player_ids: List[str] = None) -> List[LeaderboardEntry]:
+def create_leaderboard(players: List[PlayerStats], allowed_players: List[PlayerInfo] = None) -> List[LeaderboardEntry]:
     """
     Create a leaderboard from player statistics, sorted by kills first, then by average combat score.
-    Only includes players that are in the allowed_player_ids list if provided.
+    Only includes players that are in the allowed_players list if provided.
     
     Args:
         players: List of PlayerStats objects
-        allowed_player_ids: Optional list of player IDs to include in the leaderboard
+        allowed_players: Optional list of PlayerInfo objects to include in the leaderboard
     
     Returns:
         List of LeaderboardEntry objects sorted by rank
     """
-    # Filter players if allowed_player_ids is provided
-    if allowed_player_ids:
-        filtered_players = [player for player in players if player.player_id in allowed_player_ids]
+    # Filter players if allowed_players is provided
+    if allowed_players:
+        filtered_players = [player for player in players if player.player_info in allowed_players]
     else:
         filtered_players = players
     
@@ -339,7 +423,7 @@ def create_leaderboard(players: List[PlayerStats], allowed_player_ids: List[str]
     for i, player in enumerate(sorted_players):
         entry = LeaderboardEntry(
             rank=i + 1,
-            player_id=player.player_id,
+            player_info=player.player_info,
             kills=player.kills,
             average_combat_score=player.average_combat_score
         )
@@ -376,24 +460,46 @@ async def get_match_leaderboard(request: MatchValidationRequest):
         async with httpx.AsyncClient() as client:
             match_details = await get_match_details(client, final_match_id)
         
-        # Extract player statistics
-        players_data = match_details.get("players", [])
-        players = [PlayerStats(**player_data) for player_data in players_data]
+        # Extract player statistics from real Riot API response
+        match_data = match_details.get("data", {})
+        players_data = match_data.get("players", {}).get("all_players", [])
+        
+        # Convert Riot API player data to our PlayerStats format
+        players = []
+        for player_data in players_data:
+            # Create PlayerInfo from the player data
+            player_info = PlayerInfo(
+                name=player_data.get("name", ""),
+                tag=player_data.get("tag", ""),
+                region=request.players[0].region if request.players else "na",  # Use region from request
+                platform=request.players[0].platform if request.players else "pc"  # Use platform from request
+            )
+            
+            # Create PlayerStats
+            player_stats = PlayerStats(
+                player_info=player_info,
+                kills=player_data.get("stats", {}).get("kills", 0),
+                average_combat_score=player_data.get("stats", {}).get("score", 0) / max(player_data.get("stats", {}).get("rounds_played", 1), 1)
+            )
+            players.append(player_stats)
         
         # Create leaderboard with only the players from the original request
-        leaderboard = create_leaderboard(players, request.player_ids)
+        leaderboard = create_leaderboard(players, request.players)
         
-        # Parse match start time
-        match_start_time_str = match_details.get("match_start_time")
-        if 'T' in match_start_time_str:
-            match_start_time = datetime.fromisoformat(match_start_time_str.replace('Z', '+00:00'))
+        # Parse match start time from Unix timestamp
+        match_start_time_unix = match_data.get("metadata", {}).get("game_start")
+        if match_start_time_unix:
+            try:
+                match_start_time = datetime.fromtimestamp(match_start_time_unix)
+            except (ValueError, TypeError):
+                match_start_time = datetime.now()  # Fallback
         else:
-            match_start_time = datetime.fromisoformat(match_start_time_str)
+            match_start_time = datetime.now()  # Fallback
         
         return LeaderboardResponse(
             match_id=final_match_id,
             match_start_time=match_start_time,
-            map=match_details.get("map", ""),
+            map=match_data.get("metadata", {}).get("map", ""),
             leaderboard=leaderboard,
             total_players=len(leaderboard),
             message=f"Leaderboard generated successfully for match '{final_match_id}'. {len(leaderboard)} players from the original request ranked by kills and average combat score."

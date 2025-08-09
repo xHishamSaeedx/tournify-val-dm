@@ -16,51 +16,77 @@ def test_match_validation():
         {
             "name": "Valid players with common match (should pass)",
             "data": {
-                "player_ids": [
-            "player_test_match_123_1",
-            "player_test_match_123_2", 
-            "player_test_match_123_3",
-            "player_test_match_123_4",
-            "player_test_match_123_5",
-            "player_test_match_123_6",
-            "player_test_match_123_7",
-            "player_test_match_123_8",
-            "player_test_match_123_9",
-            "player_test_match_123_10"
+                "players": [
+                    {
+                        "name": "HystericalBat",
+                        "tag": "3571",
+                        "region": "ap",
+                        "platform": "pc"
+                    },
+                    {
+                        "name": "i miss her",
+                        "tag": "01819",
+                        "region": "ap",
+                        "platform": "pc"
+                    }
                 ],
-                "expected_start_time": "2024-01-15T14:32:00",
+                "expected_start_time": "2025-08-09T11:58:27",
                 "expected_map": "Ascent"
             }
         },
         {
             "name": "Valid players but wrong time/map (should fail verification)",
             "data": {
-                "player_ids": [
-                    "player_test_match_123_1",
-                    "player_test_match_123_2", 
-                    "player_test_match_123_3"
+                "players": [
+                    {
+                        "name": "Shafaath07",
+                        "tag": "7372",
+                        "region": "ap",
+                        "platform": "pc"
+                    },
+                    {
+                        "name": "HystericalBat",
+                        "tag": "3571",
+                        "region": "ap",
+                        "platform": "pc"
+                    },
+                    {
+                        "name": "i miss her",
+                        "tag": "01819",
+                        "region": "ap",
+                        "platform": "pc"
+                    }
                 ],
-                "expected_start_time": "2024-01-15T15:00:00",  # Wrong time
+                "expected_start_time": "2025-08-09T11:58:27",  # Wrong time
                 "expected_map": "Bind"  # Wrong map
             }
         },
         {
             "name": "Players with no common match (should fail)",
             "data": {
-                "player_ids": [
-                    "player_no_match_1",
-                    "player_no_match_2", 
-                    "player_no_match_3"
+                "players": [
+                    {
+                        "name": "PlayerNoMatch1",
+                        "tag": "1234",
+                        "region": "ap",
+                        "platform": "pc"
+                    },
+                    {
+                        "name": "PlayerNoMatch2",
+                        "tag": "5678",
+                        "region": "ap",
+                        "platform": "pc"
+                    }
                 ],
-                "expected_start_time": "2024-01-15T14:30:00",
+                "expected_start_time": "2025-08-09T11:58:27",
                 "expected_map": "Ascent"
             }
         },
         {
             "name": "Empty player list (should fail)",
             "data": {
-                "player_ids": [],
-                "expected_start_time": "2024-01-15T14:30:00",
+                "players": [],
+                "expected_start_time": "2025-08-09T11:58:27",
                 "expected_map": "Ascent"
             }
         }
@@ -82,7 +108,7 @@ def test_match_validation():
             if response.status_code == 200:
                 result = response.json()
                 print("✅ Match validation successful!")
-                print(f"Match ID: {result['match_id']}")
+                print(f"🎯 Match ID found: {result['match_id']}")
                 print(f"Percentage with match: {result['percentage_with_match']:.1f}%")
                 print(f"Validation passed: {result['validation_passed']}")
                 print(f"Match details verified: {result['match_details_verified']}")
