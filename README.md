@@ -51,3 +51,4 @@ The leaderboard system works in two main phases:
 
 1. **Upgrade API Key**: Improve the API key system for better security and rate limiting
 2. **Change Time Window**: Reduce match history check from 2 days to 30 minutes for more precise tournament validation
+3. **Return Non-Participants**: Add functionality to return the list of players who were detected as not participating in the match
