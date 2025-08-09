@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.models import MatchRequest, MatchResponse, MatchValidationRequest, MatchValidationResponse
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import httpx
 import asyncio
@@ -66,9 +66,10 @@ async def validate_match_history(request: MatchValidationRequest):
     """
     Validate if players have the match ID in their match history.
     If 70% don't have the original match ID, check for alternative match IDs that 70% share.
+    After confirming the correct match ID, fetch match details and verify start time and map.
     
     Args:
-        request: MatchValidationRequest containing match_id and player_ids
+        request: MatchValidationRequest containing match_id, player_ids, expected_start_time, and expected_map
     
     Returns:
         MatchValidationResponse with validation results
@@ -109,41 +110,71 @@ async def validate_match_history(request: MatchValidationRequest):
                         players_with_match.append(player_id)
                     else:
                         players_without_match.append(player_id)
-        
-        # Calculate percentage for original match ID
-        total_players = len(request.player_ids)
-        percentage_with_match = (len(players_with_match) / total_players) * 100 if total_players > 0 else 0
-        
-        # Check if 70% threshold is met for original match ID
-        validation_passed = percentage_with_match >= 70
-        alternative_match_id = None
-        host_error = False
-        
-        # If original validation failed, check for alternative match IDs
-        if not validation_passed:
-            alternative_match_id, alternative_percentage = find_alternative_match_id(all_player_matches, total_players)
             
-            if alternative_match_id:
-                # Found an alternative match ID that 70% of players share
-                validation_passed = True
-                host_error = True  # Indicate this is due to host error
-                message = f"Original match ID '{request.match_id}' not found in 70% of players' history. However, found alternative match ID '{alternative_match_id}' that {alternative_percentage:.1f}% of players share. This suggests a host error."
+            # Calculate percentage for original match ID
+            total_players = len(request.player_ids)
+            percentage_with_match = (len(players_with_match) / total_players) * 100 if total_players > 0 else 0
+            
+            # Check if 70% threshold is met for original match ID
+            validation_passed = percentage_with_match >= 70
+            alternative_match_id = None
+            host_error = False
+            final_match_id = request.match_id
+            
+            # If original validation failed, check for alternative match IDs
+            if not validation_passed:
+                alternative_match_id, alternative_percentage = find_alternative_match_id(all_player_matches, total_players)
+                
+                if alternative_match_id:
+                    # Found an alternative match ID that 70% of players share
+                    validation_passed = True
+                    host_error = True  # Indicate this is due to host error
+                    final_match_id = alternative_match_id
+                    message = f"Original match ID '{request.match_id}' not found in 70% of players' history. However, found alternative match ID '{alternative_match_id}' that {alternative_percentage:.1f}% of players share. This suggests a host error."
+                else:
+                    # No alternative match ID found
+                    message = f"Validation failed! Only {percentage_with_match:.1f}% of players have the match '{request.match_id}' in their history (70% required). No alternative match ID found that 70% of players share."
+                    return MatchValidationResponse(
+                        match_id=request.match_id,
+                        players_with_match=players_with_match,
+                        players_without_match=players_without_match,
+                        percentage_with_match=percentage_with_match,
+                        validation_passed=False,
+                        message=message,
+                        alternative_match_id=None,
+                        host_error=False,
+                        match_details_verified=False,
+                        time_verification_passed=None,
+                        map_verification_passed=None
+                    )
             else:
-                # No alternative match ID found
-                message = f"Validation failed! Only {percentage_with_match:.1f}% of players have the match '{request.match_id}' in their history (70% required). No alternative match ID found that 70% of players share."
-        else:
-            message = f"Validation passed! {percentage_with_match:.1f}% of players have the match in their history."
-        
-        return MatchValidationResponse(
-            match_id=request.match_id,
-            players_with_match=players_with_match,
-            players_without_match=players_without_match,
-            percentage_with_match=percentage_with_match,
-            validation_passed=validation_passed,
-            message=message,
-            alternative_match_id=alternative_match_id,
-            host_error=host_error
-        )
+                message = f"Validation passed! {percentage_with_match:.1f}% of players have the match in their history."
+            
+            # If validation passed (either original or alternative), verify match details
+            if validation_passed:
+                # Create a new client for match details verification
+                async with httpx.AsyncClient() as verify_client:
+                    match_details_verified, time_verification_passed, map_verification_passed, verification_message = await verify_match_details(verify_client, final_match_id, request.expected_start_time, request.expected_map)
+                
+                if not match_details_verified:
+                    validation_passed = False
+                    message = verification_message
+                else:
+                    message += f" Match details verified successfully."
+            
+            return MatchValidationResponse(
+                match_id=request.match_id,
+                players_with_match=players_with_match,
+                players_without_match=players_without_match,
+                percentage_with_match=percentage_with_match,
+                validation_passed=validation_passed,
+                message=message,
+                alternative_match_id=alternative_match_id,
+                host_error=host_error,
+                match_details_verified=match_details_verified if validation_passed else False,
+                time_verification_passed=time_verification_passed,
+                map_verification_passed=map_verification_passed
+            )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
@@ -239,3 +270,72 @@ async def check_player_match_history(client: httpx.AsyncClient, player_id: str, 
     except Exception:
         # If there's any error, assume the player doesn't have the match
         return False
+
+async def verify_match_details(client: httpx.AsyncClient, match_id: str, expected_start_time: datetime, expected_map: str) -> tuple:
+    """
+    Verify match details by fetching match data and checking start time and map.
+    
+    Args:
+        client: HTTP client for making requests
+        match_id: The match ID to verify
+        expected_start_time: Expected match start time
+        expected_map: Expected map name
+    
+    Returns:
+        Tuple of (verified, time_passed, map_passed, message)
+    """
+    try:
+        # Fetch match details from riot dummy server
+        response = await client.post(
+            "http://localhost:8001/matches/",
+            json={"match_id": match_id},
+            timeout=10.0
+        )
+        
+        if response.status_code != 200:
+            return False, None, None, f"Failed to fetch match details for match ID '{match_id}'"
+        
+        data = response.json()
+        actual_start_time_str = data.get("match_start_time")
+        actual_map = data.get("map")
+        
+        if not actual_start_time_str or not actual_map:
+            return False, None, None, f"Invalid match data received for match ID '{match_id}'"
+        
+        # Parse the actual start time - handle different datetime formats
+        try:
+            # Try parsing as ISO format first
+            if 'T' in actual_start_time_str:
+                # ISO format: "2024-01-15T14:30:00" or "2024-01-15T14:30:00.000000"
+                actual_start_time = datetime.fromisoformat(actual_start_time_str.replace('Z', '+00:00'))
+            else:
+                # Try other common formats
+                actual_start_time = datetime.fromisoformat(actual_start_time_str)
+        except ValueError as e:
+            return False, None, None, f"Invalid start time format in match data for match ID '{match_id}': {actual_start_time_str}"
+        
+        # Verify start time (within ±5 minutes)
+        time_difference = abs((actual_start_time - expected_start_time).total_seconds())
+        time_verification_passed = time_difference <= 300  # 5 minutes = 300 seconds
+        
+        # Verify map (case-insensitive)
+        map_verification_passed = actual_map.lower() == expected_map.lower()
+        
+        # Both must pass for overall verification
+        verified = time_verification_passed and map_verification_passed
+        
+        if not verified:
+            message_parts = []
+            if not time_verification_passed:
+                message_parts.append(f"start time mismatch (expected: {expected_start_time}, actual: {actual_start_time})")
+            if not map_verification_passed:
+                message_parts.append(f"map mismatch (expected: {expected_map}, actual: {actual_map})")
+            
+            message = f"Match details verification failed: {', '.join(message_parts)}"
+        else:
+            message = "Match details verified successfully"
+        
+        return verified, time_verification_passed, map_verification_passed, message
+        
+    except Exception as e:
+        return False, None, None, f"Error verifying match details: {str(e)}"

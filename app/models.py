@@ -19,6 +19,8 @@ class MatchResponse(BaseModel):
 class MatchValidationRequest(BaseModel):
     match_id: str
     player_ids: List[str]
+    expected_start_time: datetime
+    expected_map: str
 
 class MatchValidationResponse(BaseModel):
     match_id: str
@@ -29,3 +31,6 @@ class MatchValidationResponse(BaseModel):
     message: str
     alternative_match_id: Optional[str] = None
     host_error: bool = False
+    match_details_verified: bool = False
+    time_verification_passed: Optional[bool] = None
+    map_verification_passed: Optional[bool] = None

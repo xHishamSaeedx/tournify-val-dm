@@ -14,7 +14,7 @@ def test_match_validation():
     # Test cases
     test_cases = [
         {
-            "name": "Valid match ID (should pass)",
+            "name": "Valid match ID with correct details (should pass)",
             "data": {
                 "match_id": "test_match_123",
                 "player_ids": [
@@ -23,7 +23,22 @@ def test_match_validation():
                     "player_test_match_123_3",
                     "player_test_match_123_4",
                     "player_test_match_123_5"
-                ]
+                ],
+                "expected_start_time": "2024-01-15T14:32:00",
+                "expected_map": "Ascent"
+            }
+        },
+        {
+            "name": "Valid match ID but wrong time/map (should fail verification)",
+            "data": {
+                "match_id": "test_match_123",
+                "player_ids": [
+                    "player_test_match_123_1",
+                    "player_test_match_123_2", 
+                    "player_test_match_123_3"
+                ],
+                "expected_start_time": "2024-01-15T15:00:00",  # Wrong time
+                "expected_map": "Bind"  # Wrong map
             }
         },
         {
@@ -36,7 +51,9 @@ def test_match_validation():
                     "player_test_match_123_3",
                     "player_test_match_123_4",
                     "player_test_match_123_5"
-                ]
+                ],
+                "expected_start_time": "2024-01-15T14:30:00",
+                "expected_map": "Ascent"
             }
         },
         {
@@ -47,7 +64,9 @@ def test_match_validation():
                     "player_test_match_123_1",
                     "player_test_match_123_2", 
                     "player_test_match_123_3"
-                ]
+                ],
+                "expected_start_time": "2024-01-15T14:30:00",
+                "expected_map": "Ascent"
             }
         }
     ]
@@ -72,8 +91,13 @@ def test_match_validation():
                 print(f"Percentage with match: {result['percentage_with_match']:.1f}%")
                 print(f"Validation passed: {result['validation_passed']}")
                 print(f"Host error detected: {result['host_error']}")
+                print(f"Match details verified: {result['match_details_verified']}")
                 if result.get('alternative_match_id'):
                     print(f"Alternative match ID: {result['alternative_match_id']}")
+                if result.get('time_verification_passed') is not None:
+                    print(f"Time verification passed: {result['time_verification_passed']}")
+                if result.get('map_verification_passed') is not None:
+                    print(f"Map verification passed: {result['map_verification_passed']}")
                 print(f"Message: {result['message']}")
                 print(f"Players with match: {result['players_with_match']}")
                 print(f"Players without match: {result['players_without_match']}")
