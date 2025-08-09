@@ -337,10 +337,15 @@ async def verify_match_details(client: httpx.AsyncClient, match_id: str, expecte
         
         # Parse the actual start time from Unix timestamp
         try:
-            # Convert Unix timestamp to datetime
-            actual_start_time = datetime.fromtimestamp(actual_start_time_unix)
+            # Convert Unix timestamp to datetime in UTC
+            actual_start_time = datetime.fromtimestamp(actual_start_time_unix, tz=timezone.utc)
         except (ValueError, TypeError) as e:
             return False, None, None, f"Invalid start time format in match data for match ID '{match_id}': {actual_start_time_unix}"
+        
+        # Ensure expected_start_time is also in UTC for comparison
+        if expected_start_time.tzinfo is None:
+            # If expected_start_time has no timezone info, assume it's UTC
+            expected_start_time = expected_start_time.replace(tzinfo=timezone.utc)
         
         # Verify start time (within ±5 minutes)
         time_difference = abs((actual_start_time - expected_start_time).total_seconds())
@@ -490,11 +495,11 @@ async def get_match_leaderboard(request: MatchValidationRequest):
         match_start_time_unix = match_data.get("metadata", {}).get("game_start")
         if match_start_time_unix:
             try:
-                match_start_time = datetime.fromtimestamp(match_start_time_unix)
+                match_start_time = datetime.fromtimestamp(match_start_time_unix, tz=timezone.utc)
             except (ValueError, TypeError):
-                match_start_time = datetime.now()  # Fallback
+                match_start_time = datetime.now(timezone.utc)  # Fallback
         else:
-            match_start_time = datetime.now()  # Fallback
+            match_start_time = datetime.now(timezone.utc)  # Fallback
         
         return LeaderboardResponse(
             match_id=final_match_id,

@@ -21,7 +21,7 @@ async def test_leaderboard():
                 "platform": "pc"
             }
         ],
-        "expected_start_time": "2025-08-09T11:58:27",
+        "expected_start_time": "2025-08-09T15:58:27",
         "expected_map": "Ascent"
     }
     
