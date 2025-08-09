@@ -1,184 +1,53 @@
 # Tournify Valorant DM API
 
-A FastAPI-based application for managing Valorant deathmatch tournaments.
+A system for managing Valorant deathmatch tournaments that automatically validates matches and generates leaderboards.
 
-## Features
+## How It Works
 
-- Create and manage matches
-- Validate match history for players
-- Detect host errors by finding alternative match IDs
-- Verify match details (start time and map) after confirming correct match ID
-- Integration with Riot dummy server for match data
+### Match Validation Process
 
-## API Endpoints
+The system automatically discovers and validates matches that players participated in:
 
-### Match Management
+1. **Player History Check**: The system looks at each player's recent match history (last 30 days) to find all matches they've played.
 
-#### POST `/matches/`
+2. **Common Match Discovery**: The system automatically finds the match that at least 70% of the players share in their history. This means if most players were in the same match, the system will find it automatically.
 
-Create a new match with player details.
+3. **Match Details Verification**: Once the common match is found, the system checks if the match details match what was expected:
 
-**Request Body:**
+   - **Start Time**: The match must have started within 5 minutes of the expected time
+   - **Map**: The match must have been played on the expected map
 
-```json
-{
-  "player_ids": ["player1", "player2"],
-  "match_start_time": "2024-01-15T14:30:00",
-  "match_map": "Ascent",
-  "expected_match_id": "match_123"
-}
-```
+4. **Final Validation**: The validation only passes if both the player history check (70% threshold) and the match details verification succeed.
 
-#### GET `/matches/{match_id}`
+### Leaderboard Generation Process
 
-Get match details by match ID.
+The leaderboard system works in two main phases:
 
-### Match History Validation
+1. **Match Validation First**: Before creating a leaderboard, the system first validates the match using the same process described above. This ensures the match is legitimate and all players actually participated.
 
-#### POST `/matches/validate-match-history`
+2. **Performance Ranking**: Once validation passes, the system:
+   - Collects performance data (kills and combat scores) for all players in the match
+   - Filters to only include the players from the original request
+   - Ranks players by total kills (highest first)
+   - Uses average combat score as a tiebreaker when kills are equal
+   - Creates a final leaderboard showing each player's rank and performance
 
-Validate if players have a specific match ID in their match history. If 70% of players don't have the original match ID, the system will check for alternative match IDs that 70% of players share to detect host errors. After confirming the correct match ID, the system fetches match details and verifies the start time (±5 minutes) and map.
+## Key Features
 
-**Request Body:**
+- **Automatic Match Discovery**: No need to provide specific match IDs - the system finds the correct match automatically
+- **Player Verification**: Ensures at least 70% of players actually participated in the match
+- **Time and Map Validation**: Verifies the match happened when and where expected
+- **Performance Ranking**: Creates fair leaderboards based on kills and combat scores
+- **Real Data Integration**: Uses actual Valorant match data from Riot's servers
 
-```json
-{
-  "match_id": "test_match_123",
-  "player_ids": ["player1", "player2", "player3"],
-  "expected_start_time": "2024-01-15T14:30:00",
-  "expected_map": "Ascent"
-}
-```
+## What This Solves
 
-**Response Examples:**
+- **Tournament Integrity**: Prevents fake match submissions by verifying players actually participated
+- **Host Errors**: Automatically finds the correct match even if the wrong match ID was recorded
+- **Fair Competition**: Creates accurate leaderboards based on real performance data
+- **Automation**: Eliminates manual match verification and leaderboard creation
 
-**Successful Validation with Details Verified:**
+## TODO
 
-```json
-{
-  "match_id": "test_match_123",
-  "players_with_match": ["player1", "player2", "player3"],
-  "players_without_match": [],
-  "percentage_with_match": 100.0,
-  "validation_passed": true,
-  "message": "Validation passed! 100.0% of players have the match in their history. Match details verified successfully.",
-  "alternative_match_id": null,
-  "host_error": false,
-  "match_details_verified": true,
-  "time_verification_passed": true,
-  "map_verification_passed": true
-}
-```
-
-**Host Error Detected:**
-
-```json
-{
-  "match_id": "wrong_match_id",
-  "players_with_match": [],
-  "players_without_match": [
-    "player1",
-    "player2",
-    "player3",
-    "player4",
-    "player5"
-  ],
-  "percentage_with_match": 0.0,
-  "validation_passed": true,
-  "message": "Original match ID 'wrong_match_id' not found in 70% of players' history. However, found alternative match ID 'test_match_123' that 100.0% of players share. This suggests a host error. Match details verified successfully.",
-  "alternative_match_id": "test_match_123",
-  "host_error": true,
-  "match_details_verified": true,
-  "time_verification_passed": true,
-  "map_verification_passed": true
-}
-```
-
-**Validation Failed - Details Mismatch:**
-
-```json
-{
-  "match_id": "test_match_123",
-  "players_with_match": ["player1", "player2", "player3"],
-  "players_without_match": [],
-  "percentage_with_match": 100.0,
-  "validation_passed": false,
-  "message": "Match details verification failed: start time mismatch (expected: 2024-01-15T15:00:00, actual: 2024-01-15T14:30:00), map mismatch (expected: Bind, actual: Ascent)",
-  "alternative_match_id": null,
-  "host_error": false,
-  "match_details_verified": false,
-  "time_verification_passed": false,
-  "map_verification_passed": false
-}
-```
-
-**Validation Failed - No Match Found:**
-
-```json
-{
-  "match_id": "completely_wrong_id",
-  "players_with_match": [],
-  "players_without_match": ["player1", "player2", "player3"],
-  "percentage_with_match": 0.0,
-  "validation_passed": false,
-  "message": "Validation failed! Only 0.0% of players have the match 'completely_wrong_id' in their history (70% required). No alternative match ID found that 70% of players share.",
-  "alternative_match_id": null,
-  "host_error": false,
-  "match_details_verified": false,
-  "time_verification_passed": null,
-  "map_verification_passed": null
-}
-```
-
-**Validation Logic:**
-
-1. **Player History Check**: Checks each player's match history via the Riot dummy server (port 8001)
-2. **Percentage Calculation**: Calculates the percentage of players who have the match ID in their history
-3. **Alternative Match Detection**: If less than 70% have the original match ID, searches for alternative match IDs that 70% share
-4. **Match Details Verification**: After confirming the correct match ID, fetches match details and verifies:
-   - **Start Time**: Must be within ±5 minutes of expected time
-   - **Map**: Must match exactly (case-insensitive)
-5. **Final Validation**: Only passes if both player history and match details verification succeed
-
-## Setup and Running
-
-1. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Start the main application (port 8000):
-
-   ```bash
-   python run.py
-   ```
-
-3. Start the Riot dummy server (port 8001):
-
-   ```bash
-   cd riot_dummy_server
-   python main.py
-   ```
-
-4. Test the functionality:
-
-   ```bash
-   python test_match_validation.py
-   ```
-
-## Architecture
-
-- **Main App (Port 8000)**: Handles match creation and validation
-- **Riot Dummy Server (Port 8001)**: Provides mock match data and player history
-- **Async HTTP Client**: Uses `httpx` for concurrent requests to check player histories
-- **Host Error Detection**: Automatically detects when the wrong match ID was provided but players share a common match
-- **Match Details Verification**: Validates start time and map after confirming the correct match ID
-
-## Dependencies
-
-- FastAPI
-- Uvicorn
-- Pydantic
-- httpx (for async HTTP requests)
-- requests (for testing)
+1. **Upgrade API Key**: Improve the API key system for better security and rate limiting
+2. **Change Time Window**: Reduce match history check from 2 days to 30 minutes for more precise tournament validation
