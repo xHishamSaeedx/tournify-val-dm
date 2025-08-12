@@ -512,6 +512,10 @@ async def get_match_leaderboard(request: MatchValidationRequest):
         # Create leaderboard with only the players from the original request
         leaderboard = create_leaderboard(players, request.players)
         
+        # Identify non-participants (players found in match but not in original request)
+        all_match_players = [player.player_info for player in players]
+        non_participants = [player for player in all_match_players if player not in request.players]
+        
         # Parse match start time from Unix timestamp
         match_start_time_unix = match_data.get("metadata", {}).get("game_start")
         if match_start_time_unix:
@@ -528,7 +532,8 @@ async def get_match_leaderboard(request: MatchValidationRequest):
             map=match_data.get("metadata", {}).get("map", ""),
             leaderboard=leaderboard,
             total_players=len(leaderboard),
-            message=f"Leaderboard generated successfully for match '{final_match_id}'. {len(leaderboard)} players from the original request ranked by kills and average combat score."
+            non_participants=non_participants,
+            message=f"Leaderboard generated successfully for match '{final_match_id}'. {len(leaderboard)} players from the original request ranked by kills and average combat score. Found {len(non_participants)} additional players in the match."
         )
         
     except HTTPException:

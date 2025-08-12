@@ -67,4 +67,5 @@ class LeaderboardResponse(BaseModel):
     map: str
     leaderboard: List[LeaderboardEntry]
     total_players: int
+    non_participants: List[PlayerInfo] = []  # Players found in match but not in original request
     message: str

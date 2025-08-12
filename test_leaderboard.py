@@ -67,6 +67,19 @@ async def test_leaderboard():
                 print(f"Map: {leaderboard_data['map']}")
                 print(f"Total Players: {leaderboard_data['total_players']}")
                 print(f"Message: {leaderboard_data['message']}")
+                
+                # Display non-participants if any found
+                non_participants = leaderboard_data.get('non_participants', [])
+                if non_participants:
+                    print(f"\n👥 Non-Participants Found ({len(non_participants)} players):")
+                    print("Player Name#Tag | Region | Platform")
+                    print("-" * 45)
+                    for player in non_participants:
+                        player_name = f"{player['name']}#{player['tag']}"
+                        print(f"{player_name:25} | {player['region']:6} | {player['platform']}")
+                else:
+                    print("\n✅ No additional players found in the match")
+                
                 print("\n🏆 Leaderboard:")
                 print("Rank | Player Name#Tag | Kills | Average Combat Score")
                 print("-" * 60)
