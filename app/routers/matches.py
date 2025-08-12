@@ -143,7 +143,9 @@ async def validate_match_history(request: MatchValidationRequest):
             players_without_match = []
             
             for player, matches in all_player_matches.items():
-                if common_match_id in matches:
+                # Check if the player has the common match ID in their match data
+                player_has_match = any(match["match_id"] == common_match_id for match in matches)
+                if player_has_match:
                     players_with_match.append(player)
                 else:
                     players_without_match.append(player)
@@ -184,7 +186,7 @@ async def get_player_match_history(client: httpx.AsyncClient, player: PlayerInfo
         player: PlayerInfo object containing name, tag, region, and platform
     
     Returns:
-        List of match IDs in the player's history (filtered to matches within last 2 days)
+        List of dictionaries containing match_id and started_at timestamp (filtered to matches within last 5 days)
     """
     try:
         # Make request to real Riot API using player info
@@ -219,13 +221,13 @@ async def get_player_match_history(client: httpx.AsyncClient, player: PlayerInfo
                 print(f"📋 First match started_at: {recent_matches[0].get('metadata', {}).get('started_at')}")
                 print(f"📋 First match match_id: {recent_matches[0].get('metadata', {}).get('match_id')}")
             
-            # Calculate the cutoff time (30 days ago to be more lenient)
+            # Calculate the cutoff time (5 days ago)
             # Use UTC timezone to match the API timestamps
-            cutoff_time = datetime.now(timezone.utc) - timedelta(days=30)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(days=5)
             print(f"⏰ Cutoff time: {cutoff_time}")
             
-            # Filter matches that are within the last 30 days and extract match IDs
-            match_ids = []
+            # Filter matches that are within the last 5 days and extract match IDs with timestamps
+            match_data = []
             for i, match in enumerate(recent_matches):
                 metadata = match.get("metadata", {})
                 started_at_str = metadata.get("started_at")
@@ -237,11 +239,11 @@ async def get_player_match_history(client: httpx.AsyncClient, player: PlayerInfo
                         # Parse the started_at timestamp
                         started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
                         print(f"📅 Parsed started_at: {started_at}")
-                        # Check if the match is within the last 30 days
+                        # Check if the match is within the last 5 days
                         if started_at >= cutoff_time:
                             match_id = metadata.get("match_id")
                             if match_id:
-                                match_ids.append(match_id)
+                                match_data.append({"match_id": match_id, "started_at": started_at})
                                 print(f"✅ Added match ID: {match_id} for {player.name}#{player.tag}")
                             else:
                                 print(f"❌ No match_id found in metadata for {player.name}#{player.tag}")
@@ -254,7 +256,7 @@ async def get_player_match_history(client: httpx.AsyncClient, player: PlayerInfo
                 else:
                     print(f"❌ No started_at found for match {i+1} for {player.name}#{player.tag}")
             
-            return match_ids
+            return match_data
         else:
             # If the request fails, return empty list
             return []
@@ -265,23 +267,24 @@ async def get_player_match_history(client: httpx.AsyncClient, player: PlayerInfo
 
 def find_common_match_id(all_player_matches: dict, total_players: int) -> tuple:
     """
-    Find a common match ID that 70% of players share.
+    Find a common match ID that 70% of players share, prioritizing the most recent match.
     
     Args:
-        all_player_matches: Dictionary mapping player_id to list of match IDs
+        all_player_matches: Dictionary mapping player_id to list of match data dictionaries
         total_players: Total number of players
     
     Returns:
         Tuple of (common_match_id, percentage) or (None, 0) if not found
     """
-    # Collect all match IDs from all players
-    all_match_ids = []
+    # Collect all match data from all players
+    all_match_data = []
     for player_matches in all_player_matches.values():
-        all_match_ids.extend(player_matches)
+        all_match_data.extend(player_matches)
     
-    print(f"📊 All match IDs found: {all_match_ids}")
+    print(f"📊 All match data found: {len(all_match_data)} matches")
     
-    # Count occurrences of each match ID
+    # Extract match IDs and count occurrences
+    all_match_ids = [match["match_id"] for match in all_match_data]
     match_counter = Counter(all_match_ids)
     print(f"📈 Match ID counts: {dict(match_counter)}")
     
@@ -289,10 +292,28 @@ def find_common_match_id(all_player_matches: dict, total_players: int) -> tuple:
     required_count = int(total_players * 0.7)
     print(f"🎯 Required count for 70%: {required_count} out of {total_players} players")
     
+    # Get all match IDs that meet the 70% threshold
+    qualifying_matches = []
     for match_id, count in match_counter.most_common():
         if count >= required_count:
             percentage = (count / total_players) * 100
-            return match_id, percentage
+            # Find the most recent timestamp for this match ID
+            match_timestamps = [match["started_at"] for match in all_match_data if match["match_id"] == match_id]
+            if match_timestamps:
+                most_recent_timestamp = max(match_timestamps)
+                qualifying_matches.append({
+                    "match_id": match_id,
+                    "count": count,
+                    "percentage": percentage,
+                    "most_recent_timestamp": most_recent_timestamp
+                })
+    
+    if qualifying_matches:
+        # Sort by most recent timestamp first, then by count (descending)
+        qualifying_matches.sort(key=lambda x: (x["most_recent_timestamp"], x["count"]), reverse=True)
+        most_recent_match = qualifying_matches[0]
+        print(f"🎯 Selected most recent qualifying match: {most_recent_match['match_id']} (started at {most_recent_match['most_recent_timestamp']})")
+        return most_recent_match["match_id"], most_recent_match["percentage"]
     
     return None, 0
 
