@@ -68,4 +68,5 @@ class LeaderboardResponse(BaseModel):
     leaderboard: List[LeaderboardEntry]
     total_players: int
     non_participants: List[PlayerInfo] = []  # Players found in match but not in original request
+    missing_players: List[PlayerInfo] = []  # Players from original request but not found in match
     message: str

@@ -80,6 +80,18 @@ async def test_leaderboard():
                 else:
                     print("\n✅ No additional players found in the match")
                 
+                # Display missing players if any found
+                missing_players = leaderboard_data.get('missing_players', [])
+                if missing_players:
+                    print(f"\n❌ Missing Players ({len(missing_players)} players from original request not found in match):")
+                    print("Player Name#Tag | Region | Platform")
+                    print("-" * 45)
+                    for player in missing_players:
+                        player_name = f"{player['name']}#{player['tag']}"
+                        print(f"{player_name:25} | {player['region']:6} | {player['platform']}")
+                else:
+                    print("\n✅ All players from the original request were found in the match")
+                
                 print("\n🏆 Leaderboard:")
                 print("Rank | Player Name#Tag | Kills | Average Combat Score")
                 print("-" * 60)
